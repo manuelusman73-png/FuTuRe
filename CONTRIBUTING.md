@@ -28,10 +28,12 @@ npm run dev
 
 ## Testing
 
+For detailed instructions on our testing strategy, setup, and guidelines, please refer to our [Testing Documentation](TESTING.md).
+
 Before submitting a PR, ensure:
-- Code runs without errors
-- New features are tested manually
-- No console errors in browser
+- [ ] All automated tests pass (`npm test`)
+- [ ] New features are tested manually
+- [ ] No console errors in browser
 
 ## Issue Labels
 
