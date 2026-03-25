@@ -6,6 +6,7 @@ import swaggerSpec from './config/swagger.js';
 import stellarRoutes from './routes/stellar.js';
 import eventsRoutes from './routes/events.js';
 import securityRoutes from './routes/security.js';
+import loadTestingRoutes from './routes/loadTesting.js';
 import { eventMonitor } from './eventSourcing/index.js';
 import { auditLogger } from './security/index.js';
 
@@ -27,6 +28,7 @@ app.use('/api-docs', swaggerUi.serve, swaggerUi.setup(swaggerSpec));
 app.use('/api/stellar', stellarRoutes);
 app.use('/api/events', eventsRoutes);
 app.use('/api/security', securityRoutes);
+app.use('/api/load-testing', loadTestingRoutes);
 
 /**
  * @swagger

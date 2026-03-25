@@ -1,2 +1,0 @@
-{"id":"1774403569161-229sycrp8","aggregateId":"agg-replay-1","type":"AccountCreated","data":{"publicKey":"test-key","secretKey":"secret"},"version":1,"timestamp":"2026-03-25T01:52:49.161Z","metadata":{}}
-{"id":"1774403569162-vh3zzf8ph","aggregateId":"agg-replay-1","type":"BalanceChecked","data":{"balances":[{"asset":"XLM","balance":"100"}]},"version":2,"timestamp":"2026-03-25T01:52:49.162Z","metadata":{}}

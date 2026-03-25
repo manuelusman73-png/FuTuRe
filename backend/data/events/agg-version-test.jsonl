@@ -1,2 +1,0 @@
-{"id":"1774403569163-klqc9hc32","aggregateId":"agg-version-test","type":"AccountCreated","data":{"publicKey":"test-key"},"version":1,"timestamp":"2026-03-25T01:52:49.163Z","metadata":{}}
-{"id":"1774403569163-u4zoom01c","aggregateId":"agg-version-test","type":"PaymentSent","data":{"destination":"dest","amount":"50"},"version":2,"timestamp":"2026-03-25T01:52:49.163Z","metadata":{}}
