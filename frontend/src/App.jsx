@@ -33,6 +33,7 @@ function App() {
   const [status, setStatus] = useState(null);
   const [notifications, setNotifications] = useState([]);
   const [loading, setLoading] = useState('');
+  const [showQR, setShowQR] = useState(false);
 
   const prefersReduced = useReducedMotion();
   const v = makeVariants(prefersReduced);
@@ -141,6 +142,9 @@ function App() {
             >
               <p><strong>Public Key:</strong> {account.publicKey}</p>
               <p><strong>Secret Key:</strong> {account.secretKey}</p>
+              <motion.button className="qr-trigger" onClick={() => setShowQR(true)} {...tap}>
+                🔲 Show QR Code
+              </motion.button>
             </motion.div>
           )}
         </AnimatePresence>
@@ -254,6 +258,13 @@ function App() {
             <span className="msg">{status.message}</span>
             {status.retry && <motion.button onClick={status.retry} {...tap}>Retry</motion.button>}
           </motion.div>
+        )}
+      </AnimatePresence>
+
+      {/* QR Code Modal */}
+      <AnimatePresence>
+        {showQR && account && (
+          <QRCodeModal publicKey={account.publicKey} onClose={() => setShowQR(false)} />
         )}
       </AnimatePresence>
     </div>
