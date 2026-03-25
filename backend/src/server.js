@@ -6,6 +6,12 @@ import swaggerUi from 'swagger-ui-express';
 import swaggerSpec from './config/swagger.js';
 import stellarRoutes from './routes/stellar.js';
 import { initWebSocket } from './services/websocket.js';
+import eventsRoutes from './routes/events.js';
+import securityRoutes from './routes/security.js';
+import loadTestingRoutes from './routes/loadTesting.js';
+import chaosRoutes from './routes/chaos.js';
+import { eventMonitor } from './eventSourcing/index.js';
+import { auditLogger } from './security/index.js';
 
 dotenv.config();
 
@@ -15,8 +21,17 @@ const PORT = process.env.PORT || 3001;
 app.use(cors());
 app.use(express.json());
 
+// Initialize event sourcing
+await eventMonitor.initialize();
+await auditLogger.initialize();
+
+// Swagger Documentation
 app.use('/api-docs', swaggerUi.serve, swaggerUi.setup(swaggerSpec));
 app.use('/api/stellar', stellarRoutes);
+app.use('/api/events', eventsRoutes);
+app.use('/api/security', securityRoutes);
+app.use('/api/load-testing', loadTestingRoutes);
+app.use('/api/chaos', chaosRoutes);
 
 app.get('/health', (req, res) => {
   res.json({ status: 'ok', network: process.env.STELLAR_NETWORK });
