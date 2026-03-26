@@ -3,6 +3,7 @@ import dotenv from 'dotenv';
 import { eventMonitor } from '../eventSourcing/index.js';
 import logger from '../config/logger.js';
 import prisma from '../db/client.js';
+import { getIssuer } from '../config/assets.js';
 
 dotenv.config();
 
@@ -69,7 +70,7 @@ export async function sendPayment(sourceSecret, destination, amount, assetCode =
   
   const asset = assetCode === 'XLM' 
     ? StellarSDK.Asset.native() 
-    : new StellarSDK.Asset(assetCode, process.env.ASSET_ISSUER);
+    : new StellarSDK.Asset(assetCode, getIssuer(assetCode));
   
   const transaction = new StellarSDK.TransactionBuilder(sourceAccount, {
     fee: StellarSDK.BASE_FEE,
@@ -136,9 +137,58 @@ export async function sendPayment(sourceSecret, destination, amount, assetCode =
   };
 }
 
+export async function createTrustline(sourceSecret, assetCode) {
+  const issuer = getIssuer(assetCode);
+  if (!issuer) throw new Error(`Unknown asset or missing issuer for ${assetCode}`);
+
+  const sourceKeypair = StellarSDK.Keypair.fromSecret(sourceSecret);
+  const sourcePublicKey = sourceKeypair.publicKey();
+  logger.info('stellar.createTrustline', { publicKey: sourcePublicKey, assetCode });
+
+  const sourceAccount = await server.loadAccount(sourcePublicKey);
+  const asset = new StellarSDK.Asset(assetCode, issuer);
+
+  const transaction = new StellarSDK.TransactionBuilder(sourceAccount, {
+    fee: StellarSDK.BASE_FEE,
+    networkPassphrase: isTestnet ? StellarSDK.Networks.TESTNET : StellarSDK.Networks.PUBLIC,
+  })
+    .addOperation(StellarSDK.Operation.changeTrust({ asset }))
+    .setTimeout(30)
+    .build();
+
+  transaction.sign(sourceKeypair);
+
+  let result;
+  try {
+    result = await server.submitTransaction(transaction);
+  } catch (err) {
+    logger.error('stellar.createTrustline.failed', { publicKey: sourcePublicKey, assetCode, error: err.message });
+    throw err;
+  }
+
+  logger.info('stellar.createTrustline.success', { publicKey: sourcePublicKey, assetCode, hash: result.hash });
+
+  await eventMonitor.publishEvent(sourcePublicKey, {
+    type: 'TrustlineCreated',
+    data: { assetCode, issuer, hash: result.hash },
+    version: 1,
+  });
+
+  return { hash: result.hash, assetCode, issuer };
+}
+
 export async function getExchangeRate(from, to) {
-  // Placeholder - integrate with price oracle or DEX
-  return 1.0;
+  if (from === to) return 1.0;
+  try {
+    const fromAsset = from === 'XLM' ? StellarSDK.Asset.native() : new StellarSDK.Asset(from, getIssuer(from));
+    const toAsset   = to   === 'XLM' ? StellarSDK.Asset.native() : new StellarSDK.Asset(to,   getIssuer(to));
+    const orderbook = await server.orderbook(fromAsset, toAsset).call();
+    const bestAsk = orderbook.asks?.[0]?.price;
+    return bestAsk ? parseFloat(bestAsk) : null;
+  } catch (err) {
+    logger.warn('stellar.getExchangeRate.failed', { from, to, error: err.message });
+    return null;
+  }
 }
 
 export async function getNetworkStatus() {
