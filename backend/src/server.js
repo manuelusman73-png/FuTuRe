@@ -12,6 +12,7 @@ import loadTestingRoutes from './routes/loadTesting.js';
 import chaosRoutes from './routes/chaos.js';
 import { eventMonitor } from './eventSourcing/index.js';
 import { auditLogger } from './security/index.js';
+import { createRateLimiter } from './middleware/rateLimiter.js';
 
 dotenv.config();
 
@@ -33,6 +34,9 @@ app.use(cors({
 }));
 app.use(express.json({ limit: '10kb' }));
 app.use(express.urlencoded({ extended: false, limit: '10kb' }));
+
+// Rate limiting
+app.use(createRateLimiter());
 
 // Initialize event sourcing
 await eventMonitor.initialize();
