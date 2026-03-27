@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 import axios from 'axios';
 import { motion, AnimatePresence, useReducedMotion } from 'framer-motion';
 import { isValidStellarAddress } from './utils/validateStellarAddress';
@@ -13,6 +13,14 @@ import { QRCodeModal } from './components/QRCodeModal';
 import { NetworkBadge } from './components/NetworkBadge';
 import { StatusMessage } from './components/StatusMessage';
 import { logError } from './utils/errorLogger';
+import {
+  SecurityKeyWarning,
+  SecretKeyDisplay,
+  LargeTransactionWarning,
+  TransactionReviewCard,
+  SecurityBestPracticesModal,
+  NetworkWarning
+} from './components/forms';
 
 const STATUS_COLORS = { connected: '#22c55e', disconnected: '#ef4444', reconnecting: '#f59e0b' };
 
@@ -33,12 +41,27 @@ function App() {
   const [amount, setAmount] = useState('');
   const [loading, setLoading] = useState('');
   const [showQR, setShowQR] = useState(false);
+  const [showSecurityBestPractices, setShowSecurityBestPractices] = useState(false);
+  const [largeTransactionConfirmed, setLargeTransactionConfirmed] = useState(false);
+  const [securityAcknowledged, setSecurityAcknowledged] = useState(false);
 
   const msg = useMessages();
 
   const prefersReduced = useReducedMotion();
   const v = makeVariants(prefersReduced);
   const tap = tapScale(prefersReduced);
+
+  // Show security best practices on first load
+  useEffect(() => {
+    if (!sessionStorage.getItem('securityBestPractices_dismissed')) {
+      setShowSecurityBestPractices(true);
+    }
+  }, []);
+
+  const dismissSecurityBestPractices = () => {
+    setShowSecurityBestPractices(false);
+    sessionStorage.setItem('securityBestPractices_dismissed', 'true');
+  };
 
   const handleWsMessage = (wsMsg) => {
     if (wsMsg.type === 'transaction') {
@@ -58,7 +81,8 @@ function App() {
     try {
       const { data } = await axios.post('/api/stellar/account/create');
       setAccount(data);
-      msg.success('Account created! Save your secret key securely.');
+      msg.success('Account created! ⚠️ Save your secret key securely.');
+      setSecurityAcknowledged(false); // Reset for new account
     } catch (error) {
       logError(error, { context: 'createAccount' });
       msg.error(getFriendlyError(error), { retry: createAccount });
@@ -84,8 +108,23 @@ function App() {
   const amountError = validateAmount(amount, xlmBalance !== null ? parseFloat(xlmBalance) : null);
   const amountValid = amountTouched && !amountError;
 
+  // Reset large transaction confirmation when amount changes
+  useEffect(() => {
+    if (amount) {
+      setLargeTransactionConfirmed(false);
+    }
+  }, [amount]);
+
   const sendPayment = async () => {
     if (!account || !recipientValid || !amountValid) return;
+    
+    // Check if large transaction is confirmed
+    const numAmount = parseFloat(amount);
+    if (numAmount > 1000 && !largeTransactionConfirmed) {
+      msg.warning('⚠️ Please review and confirm the large transaction warning below.');
+      return;
+    }
+
     setLoading('send');
     try {
       const { data } = await axios.post('/api/stellar/payment/send', {
@@ -95,6 +134,9 @@ function App() {
         assetCode: 'XLM'
       });
       msg.success(`Payment sent! Hash: ${data.hash}`);
+      setRecipient('');
+      setAmount('');
+      setLargeTransactionConfirmed(false);
       checkBalance();
     } catch (error) {
       logError(error, { context: 'sendPayment' });
@@ -107,6 +149,26 @@ function App() {
       <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
         <h1>Stellar Remittance Platform</h1>
         <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+          <motion.button
+            onClick={() => setShowSecurityBestPractices(true)}
+            whileHover={{ scale: 1.05 }}
+            whileTap={{ scale: 0.95 }}
+            style={{
+              background: '#0066cc',
+              color: 'white',
+              border: 'none',
+              borderRadius: 4,
+              padding: '8px 12px',
+              fontSize: 12,
+              fontWeight: 600,
+              cursor: 'pointer',
+              width: 'auto',
+              minHeight: 'auto',
+            }}
+            title="View security best practices"
+          >
+            🛡️ Security
+          </motion.button>
           <NetworkBadge status={networkStatus} />
           <motion.span
             animate={{ opacity: [0.6, 1, 0.6] }}
@@ -118,6 +180,9 @@ function App() {
           </motion.span>
         </div>
       </div>
+
+      {/* Network Warning */}
+      <NetworkWarning networkStatus={networkStatus} />
 
       {/* Create Account */}
       <motion.div className="section" variants={v.fadeSlide} initial="hidden" animate="visible">
@@ -131,11 +196,10 @@ function App() {
               variants={v.pop}
               initial="hidden" animate="visible" exit="exit"
             >
-              <p><strong>Public Key:</strong> {account.publicKey}</p>
-              <p><strong>Secret Key:</strong> {account.secretKey}</p>
-              <motion.button className="qr-trigger" onClick={() => setShowQR(true)} {...tap}>
-                🔲 Show QR Code
-              </motion.button>
+              <SecretKeyDisplay
+                secretKey={account.secretKey}
+                publicKey={account.publicKey}
+              />
             </motion.div>
           )}
         </AnimatePresence>
@@ -164,44 +228,69 @@ function App() {
             {/* Send Payment */}
             <motion.div className="section" variants={v.fadeSlide}>
               <ErrorBoundary context="send-payment">
-              <h3>Send Payment</h3>
-              <div className="input-wrap">
-                <input
-                  type="text"
-                  placeholder="Recipient Public Key"
-                  value={recipient}
-                  onChange={(e) => setRecipient(e.target.value)}
-                  style={{ border: `2px solid ${recipientTouched ? (recipientValid ? '#22c55e' : '#ef4444') : '#ccc'}` }}
-                />
-                {recipientTouched && <span className="input-icon">{recipientValid ? '✅' : '❌'}</span>}
-              </div>
-              <AnimatePresence>
-                {recipientTouched && !recipientValid && (
-                  <motion.p className="field-error" variants={v.fadeSlide} initial="hidden" animate="visible" exit="exit">
-                    Invalid Stellar address format (must start with G and be 56 characters)
-                  </motion.p>
-                )}
-              </AnimatePresence>
-              <div className="input-wrap">
-                <input
-                  type="text"
-                  placeholder="Amount (XLM)"
-                  value={amount}
-                  onChange={(e) => setAmount(formatAmount(e.target.value))}
-                  style={{ border: `2px solid ${amountTouched ? (amountValid ? '#22c55e' : '#ef4444') : '#ccc'}` }}
-                />
-                {amountTouched && <span className="input-icon">{amountValid ? '✅' : '❌'}</span>}
-              </div>
-              <AnimatePresence>
-                {amountTouched && amountError && (
-                  <motion.p className="field-error" variants={v.fadeSlide} initial="hidden" animate="visible" exit="exit">
-                    {amountError}
-                  </motion.p>
-                )}
-              </AnimatePresence>
-              <motion.button onClick={sendPayment} {...tap} disabled={!recipientValid || !amountValid || loading === 'send'}>
-                Send {loading === 'send' && <Spinner />}
-              </motion.button>
+                <h3>Send Payment</h3>
+                <div className="input-wrap">
+                  <input
+                    type="text"
+                    placeholder="Recipient Public Key"
+                    value={recipient}
+                    onChange={(e) => setRecipient(e.target.value)}
+                    style={{ border: `2px solid ${recipientTouched ? (recipientValid ? '#22c55e' : '#ef4444') : '#ccc'}` }}
+                  />
+                  {recipientTouched && <span className="input-icon">{recipientValid ? '✅' : '❌'}</span>}
+                </div>
+                <AnimatePresence>
+                  {recipientTouched && !recipientValid && (
+                    <motion.p className="field-error" variants={v.fadeSlide} initial="hidden" animate="visible" exit="exit">
+                      Invalid Stellar address format (must start with G and be 56 characters)
+                    </motion.p>
+                  )}
+                </AnimatePresence>
+                <div className="input-wrap">
+                  <input
+                    type="text"
+                    placeholder="Amount (XLM)"
+                    value={amount}
+                    onChange={(e) => setAmount(formatAmount(e.target.value))}
+                    style={{ border: `2px solid ${amountTouched ? (amountValid ? '#22c55e' : '#ef4444') : '#ccc'}` }}
+                  />
+                  {amountTouched && <span className="input-icon">{amountValid ? '✅' : '❌'}</span>}
+                </div>
+                <AnimatePresence>
+                  {amountTouched && amountError && (
+                    <motion.p className="field-error" variants={v.fadeSlide} initial="hidden" animate="visible" exit="exit">
+                      {amountError}
+                    </motion.p>
+                  )}
+                </AnimatePresence>
+
+                {/* Large Transaction Warning */}
+                <AnimatePresence>
+                  {amountValid && (
+                    <LargeTransactionWarning
+                      amount={amount}
+                      assetCode="XLM"
+                      threshold={1000}
+                      onConfirm={() => setLargeTransactionConfirmed(true)}
+                    />
+                  )}
+                </AnimatePresence>
+
+                {/* Transaction Review Card */}
+                <AnimatePresence>
+                  {recipientValid && amountValid && xlmBalance !== null && (
+                    <TransactionReviewCard
+                      recipient={recipient}
+                      amount={amount}
+                      assetCode="XLM"
+                      balance={xlmBalance}
+                    />
+                  )}
+                </AnimatePresence>
+
+                <motion.button onClick={sendPayment} {...tap} disabled={!recipientValid || !amountValid || loading === 'send'}>
+                  Send {loading === 'send' && <Spinner />}
+                </motion.button>
               </ErrorBoundary>
             </motion.div>
 
@@ -224,12 +313,11 @@ function App() {
         )}
       </AnimatePresence>
 
-      {/* QR Code Modal */}
-      <AnimatePresence>
-        {showQR && account && (
-          <QRCodeModal publicKey={account.publicKey} onClose={() => setShowQR(false)} />
-        )}
-      </AnimatePresence>
+      {/* Security Best Practices Modal */}
+      <SecurityBestPracticesModal
+        isOpen={showSecurityBestPractices}
+        onClose={dismissSecurityBestPractices}
+      />
     </div>
   );
 }
