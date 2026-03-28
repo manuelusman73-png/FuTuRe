@@ -20,6 +20,7 @@ import webhookRoutes from './routes/webhooks.js';
 import metricsRoutes from './routes/metrics.js';
 import transactionRoutes from './routes/transactions.js';
 import complianceRoutes from './routes/compliance.js';
+import pathPaymentRoutes from './routes/pathPayment.js';
 import { eventMonitor } from './eventSourcing/index.js';
 import { auditLogger } from './security/index.js';
 import { getConfig } from './config/env.js';
@@ -71,6 +72,7 @@ app.use('/api/webhooks', webhookRoutes);
 app.use('/api/metrics', metricsRoutes);
 app.use('/api/transactions', transactionRoutes);
 app.use('/api/compliance', complianceRoutes);
+app.use('/api/path-payment', pathPaymentRoutes);
 
 app.get('/health', async (req, res) => {
   const db = await checkDBHealth();
