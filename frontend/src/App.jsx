@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback } from 'react';
+import { useEffect, useCallback } from 'react';
 import axios from 'axios';
 import { motion, AnimatePresence, useReducedMotion } from 'framer-motion';
 import { isValidStellarAddress } from './utils/validateStellarAddress';
@@ -22,6 +22,7 @@ import { FeeDisplay } from './components/FeeDisplay';
 import { logError } from './utils/errorLogger';
 import { ImportAccountForm } from './components/ImportAccountForm';
 import { useTheme } from './contexts/ThemeContext';
+import { useAppState, useAppDispatch, A } from './store/index.js';
 
 const STATUS_COLORS = { connected: '#22c55e', disconnected: '#ef4444', reconnecting: '#f59e0b' };
 const TIMEOUT_MS = 30000;
@@ -36,45 +37,28 @@ function withTimeout(promise) {
 }
 
 function App() {
-  const [account, setAccount] = useState(null);
-  const [balance, setBalance] = useState(null);
-  const [recipient, setRecipient] = useState('');
-  const [amount, setAmount] = useState('');
-  const [loading, setLoading] = useState('');
-  const [showQR, setShowQR] = useState(false);
-  const [showShortcuts, setShowShortcuts] = useState(false);
+  const { account, balance, loading, recipient, amount, showQR, showImportForm, showShortcuts } = useAppState();
+  const dispatch = useAppDispatch();
 
   const msg = useMessages();
   const { canInstall, install, updateAvailable, applyUpdate } = usePWA();
   const { queue: queueOffline, pendingCount } = useOfflineQueue();
-  const [showImportForm, setShowImportForm] = useState(false);
-
   const { theme, isDark, toggleTheme } = useTheme();
   const prefersReduced = useReducedMotion();
   const v = makeVariants(prefersReduced);
   const tap = tapScale(prefersReduced);
 
-  // Show security best practices on first load
-  useEffect(() => {
-    if (!sessionStorage.getItem('securityBestPractices_dismissed')) {
-      setShowSecurityBestPractices(true);
-    }
-  }, []);
+  const setLoading = (val) => dispatch({ type: A.SET_LOADING, payload: val });
 
-  const dismissSecurityBestPractices = () => {
-    setShowSecurityBestPractices(false);
-    sessionStorage.setItem('securityBestPractices_dismissed', 'true');
-  };
-
-  const handleWsMessage = (wsMsg) => {
+  const handleWsMessage = useCallback((wsMsg) => {
     if (wsMsg.type === 'transaction') {
       const text = wsMsg.direction === 'received'
         ? `📥 Received ${wsMsg.amount} ${wsMsg.assetCode} — tx: ${wsMsg.hash?.slice(0, 8)}…`
         : `📤 Sent ${wsMsg.amount} ${wsMsg.assetCode} — tx: ${wsMsg.hash?.slice(0, 8)}…`;
       msg.info(text);
-      if (wsMsg.balance) setBalance((prev) => prev ? { ...prev, balances: wsMsg.balance } : null);
+      if (wsMsg.balance) dispatch({ type: A.SET_BALANCE, payload: { balances: wsMsg.balance } });
     }
-  };
+  }, [msg, dispatch]);
 
   const wsStatus = useWebSocket(account?.publicKey ?? null, handleWsMessage);
   const { status: networkStatus } = useNetworkStatus();
@@ -82,27 +66,26 @@ function App() {
   // Global keyboard shortcuts
   useEffect(() => {
     const onKeyDown = (e) => {
-      // Ctrl+N: create new account
       if ((e.ctrlKey || e.metaKey) && e.key === 'n') {
         e.preventDefault();
         if (loading !== 'create') createAccount();
       }
-      // Escape: close modals
       if (e.key === 'Escape') {
-        setShowQR(false);
-        setShowShortcuts(false);
+        dispatch({ type: A.SET_SHOW_QR, payload: false });
+        dispatch({ type: A.SET_SHOW_SHORTCUTS, payload: false });
       }
-      // ?: show shortcuts help
       if (e.key === '?' && !e.ctrlKey && !e.metaKey) {
         const tag = document.activeElement?.tagName;
-        if (tag !== 'INPUT' && tag !== 'TEXTAREA') setShowShortcuts((s) => !s);
+        if (tag !== 'INPUT' && tag !== 'TEXTAREA')
+          dispatch({ type: A.SET_SHOW_SHORTCUTS, payload: !showShortcuts });
       }
     };
     window.addEventListener('keydown', onKeyDown);
     return () => window.removeEventListener('keydown', onKeyDown);
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [loading]);
-  const resetForm = () => { setRecipient(''); setAmount(''); };
+  }, [loading, showShortcuts]);
+
+  const resetForm = () => dispatch({ type: A.RESET_FORM });
 
   const clearForm = () => {
     if ((recipient || amount) && !window.confirm('Clear the payment form?')) return;
@@ -113,7 +96,7 @@ function App() {
     setLoading('create');
     try {
       const { data } = await withTimeout(axios.post('/api/stellar/account/create'));
-      setAccount(data);
+      dispatch({ type: A.SET_ACCOUNT, payload: data });
       resetForm();
       msg.success('Account created! Save your secret key securely.');
     } catch (error) {
@@ -126,8 +109,8 @@ function App() {
     setLoading('import');
     try {
       const { data } = await axios.post('/api/stellar/account/import', { secretKey });
-      setAccount(data);
-      setShowImportForm(false);
+      dispatch({ type: A.SET_ACCOUNT, payload: data });
+      dispatch({ type: A.SET_SHOW_IMPORT, payload: false });
       msg.success('Account imported successfully!');
     } catch (error) {
       logError(error, { context: 'importAccount' });
@@ -140,7 +123,7 @@ function App() {
     setLoading('balance');
     try {
       const { data } = await withTimeout(axios.get(`/api/stellar/account/${account.publicKey}`));
-      setBalance(data);
+      dispatch({ type: A.SET_BALANCE, payload: data });
     } catch (error) {
       logError(error, { context: 'checkBalance' });
       msg.error(getFriendlyError(error), { retry: checkBalance });
@@ -154,38 +137,27 @@ function App() {
   const amountError = validateAmount(amount, xlmBalance !== null ? parseFloat(xlmBalance) : null);
   const amountValid = amountTouched && !amountError;
 
-  // Reset large transaction confirmation when amount changes
-  useEffect(() => {
-    if (amount) {
-      setLargeTransactionConfirmed(false);
-    }
-  }, [amount]);
-
   const sendPayment = async () => {
     if (!account || !recipientValid || !amountValid) return;
-    
-    // Check if large transaction is confirmed
-    const numAmount = parseFloat(amount);
-    if (numAmount > 1000 && !largeTransactionConfirmed) {
-      msg.warning('⚠️ Please review and confirm the large transaction warning below.');
-      return;
-    }
-
     setLoading('send');
     const payload = { sourceSecret: account.secretKey, destination: recipient, amount, assetCode: 'XLM' };
+
+    // Optimistic balance update
+    const numAmount = parseFloat(amount);
+    if (xlmBalance !== null) {
+      const optimisticBalances = balance.balances.map(b =>
+        b.asset === 'XLM' ? { ...b, balance: String((parseFloat(b.balance) - numAmount).toFixed(7)) } : b
+      );
+      dispatch({ type: A.SET_BALANCE_OPTIMISTIC, payload: { balances: optimisticBalances } });
+    }
+
     try {
-      const { data } = await axios.post('/api/stellar/payment/send', payload);
-      const { data } = await withTimeout(axios.post('/api/stellar/payment/send', {
-        sourceSecret: account.secretKey,
-        destination: recipient,
-        amount,
-        assetCode: 'XLM'
-      }));
+      const { data } = await withTimeout(axios.post('/api/stellar/payment/send', payload));
       msg.success(`Payment sent! Hash: ${data.hash}`);
       resetForm();
-      checkBalance();
+      checkBalance(); // sync real balance
     } catch (error) {
-      // If offline, queue for background sync
+      dispatch({ type: A.REVERT_BALANCE }); // roll back optimistic update
       if (!navigator.onLine) {
         await queueOffline(payload);
         msg.info('You are offline. Payment queued and will sync automatically.');
@@ -237,7 +209,7 @@ function App() {
           <button
             type="button"
             className="shortcuts-help-btn"
-            onClick={() => setShowShortcuts((s) => !s)}
+            onClick={() => dispatch({ type: A.SET_SHOW_SHORTCUTS, payload: !showShortcuts })}
             title="Keyboard shortcuts (?)"
             aria-label="Show keyboard shortcuts"
           >
@@ -261,7 +233,7 @@ function App() {
           <motion.div className="shortcuts-panel" role="dialog" aria-modal="true" aria-label="Keyboard shortcuts" variants={v.pop} initial="hidden" animate="visible" exit="exit">
             <div className="shortcuts-panel__header">
               <strong>Keyboard Shortcuts</strong>
-              <button type="button" className="qr-close" onClick={() => setShowShortcuts(false)} aria-label="Close">✕</button>
+              <button type="button" className="qr-close" onClick={() => dispatch({ type: A.SET_SHOW_SHORTCUTS, payload: false })} aria-label="Close">✕</button>
             </div>
             <ul className="shortcuts-list">
               <li><kbd>Ctrl+N</kbd> Create new account</li>
@@ -275,16 +247,14 @@ function App() {
         )}
       </AnimatePresence>
 
-      {/* Create Account */}
+      {/* Create / Import Account */}
       <motion.div className="section" variants={v.fadeSlide} initial="hidden" animate="visible">
-        <motion.button onClick={createAccount} {...tap} disabled={loading === 'create'} title="Create account (Ctrl+N)">
-          Create Account {loading === 'create' && <Spinner />}
         <div style={{ display: 'flex', gap: 10, flexWrap: 'wrap' }}>
-          <motion.button onClick={createAccount} {...tap} disabled={loading === 'create'}>
-            Create Account {loading === 'create' && <Spinner />}
+          <motion.button onClick={createAccount} {...tap} disabled={loading === 'create'} title="Create account (Ctrl+N)">
+            {loading === 'create' ? <Spinner label="Creating account..." /> : 'Create Account'}
           </motion.button>
           <motion.button
-            onClick={() => setShowImportForm((v) => !v)}
+            onClick={() => dispatch({ type: A.SET_SHOW_IMPORT, payload: !showImportForm })}
             {...tap}
             style={{ background: '#6366f1' }}
           >
@@ -298,27 +268,22 @@ function App() {
             </motion.div>
           )}
         </AnimatePresence>
-        <motion.button onClick={createAccount} {...tap} disabled={loading === 'create'}>
-          {loading === 'create' ? <Spinner label="Creating account..." /> : 'Create Account'}
-        </motion.button>
         <AnimatePresence>
           {account && (
-            <motion.div
-              className="account-info"
-              variants={v.pop}
-              initial="hidden" animate="visible" exit="exit"
-            >
+            <motion.div className="account-info" variants={v.pop} initial="hidden" animate="visible" exit="exit">
               <div className="key-row">
                 <span className="key-label">Public Key:</span>
                 <span className="key-value">{account.publicKey}</span>
                 <CopyButton text={account.publicKey} label="Copy public key" />
               </div>
-              <div className="key-row">
-                <span className="key-label">Secret Key:</span>
-                <span className="key-value">{account.secretKey}</span>
-                <CopyButton text={account.secretKey} label="Copy secret key" />
-              </div>
-              <motion.button className="qr-trigger" onClick={() => setShowQR(true)} {...tap}>
+              {account.secretKey && (
+                <div className="key-row">
+                  <span className="key-label">Secret Key:</span>
+                  <span className="key-value">{account.secretKey}</span>
+                  <CopyButton text={account.secretKey} label="Copy secret key" />
+                </div>
+              )}
+              <motion.button className="qr-trigger" onClick={() => dispatch({ type: A.SET_SHOW_QR, payload: true })} {...tap}>
                 🔲 Show QR Code
               </motion.button>
             </motion.div>
@@ -352,59 +317,59 @@ function App() {
             {/* Send Payment */}
             <motion.div className="section" variants={v.fadeSlide}>
               <ErrorBoundary context="send-payment">
-              <h3>Send Payment</h3>
-              <div className="input-wrap">
-                <input
-                  type="text"
-                  placeholder="Recipient Public Key"
-                  value={recipient}
-                  onChange={(e) => setRecipient(e.target.value)}
-                  onKeyDown={(e) => e.key === 'Enter' && sendPayment()}
-                  style={{ border: `2px solid ${recipientTouched ? (recipientValid ? '#22c55e' : '#ef4444') : '#ccc'}` }}
-                  aria-label="Recipient public key"
-                />
-                {recipientTouched && <span className="input-icon">{recipientValid ? '✅' : '❌'}</span>}
-              </div>
-              <AnimatePresence>
-                {recipientTouched && !recipientValid && (
-                  <motion.p className="field-error" variants={v.fadeSlide} initial="hidden" animate="visible" exit="exit">
-                    Invalid Stellar address format (must start with G and be 56 characters)
-                  </motion.p>
-                )}
-              </AnimatePresence>
-              <div className="input-wrap">
-                <input
-                  type="text"
-                  placeholder="Amount (XLM)"
-                  value={amount}
-                  onChange={(e) => setAmount(formatAmount(e.target.value))}
-                  onKeyDown={(e) => e.key === 'Enter' && sendPayment()}
-                  style={{ border: `2px solid ${amountTouched ? (amountValid ? '#22c55e' : '#ef4444') : '#ccc'}` }}
-                  aria-label="Payment amount in XLM"
-                />
-                {amountTouched && <span className="input-icon">{amountValid ? '✅' : '❌'}</span>}
-              </div>
-              <AnimatePresence>
-                {amountTouched && amountError && (
-                  <motion.p className="field-error" variants={v.fadeSlide} initial="hidden" animate="visible" exit="exit">
-                    {amountError}
-                  </motion.p>
-                )}
-              </AnimatePresence>
-              <FeeDisplay amount={amount} visible={amountValid} />
-              <div style={{ display: 'flex', gap: 8 }}>
-                <motion.button onClick={sendPayment} {...tap} disabled={!recipientValid || !amountValid || loading === 'send'}>
-                  {loading === 'send' ? <Spinner label="Sending payment..." /> : 'Send'}
-                </motion.button>
-                <motion.button
-                  className="btn-clear"
-                  onClick={clearForm}
-                  {...tap}
-                  disabled={loading === 'send' || (!recipient && !amount)}
-                >
-                  Clear
-                </motion.button>
-              </div>
+                <h3>Send Payment</h3>
+                <div className="input-wrap">
+                  <input
+                    type="text"
+                    placeholder="Recipient Public Key"
+                    value={recipient}
+                    onChange={(e) => dispatch({ type: A.SET_RECIPIENT, payload: e.target.value })}
+                    onKeyDown={(e) => e.key === 'Enter' && sendPayment()}
+                    style={{ border: `2px solid ${recipientTouched ? (recipientValid ? '#22c55e' : '#ef4444') : '#ccc'}` }}
+                    aria-label="Recipient public key"
+                  />
+                  {recipientTouched && <span className="input-icon">{recipientValid ? '✅' : '❌'}</span>}
+                </div>
+                <AnimatePresence>
+                  {recipientTouched && !recipientValid && (
+                    <motion.p className="field-error" variants={v.fadeSlide} initial="hidden" animate="visible" exit="exit">
+                      Invalid Stellar address format (must start with G and be 56 characters)
+                    </motion.p>
+                  )}
+                </AnimatePresence>
+                <div className="input-wrap">
+                  <input
+                    type="text"
+                    placeholder="Amount (XLM)"
+                    value={amount}
+                    onChange={(e) => dispatch({ type: A.SET_AMOUNT, payload: formatAmount(e.target.value) })}
+                    onKeyDown={(e) => e.key === 'Enter' && sendPayment()}
+                    style={{ border: `2px solid ${amountTouched ? (amountValid ? '#22c55e' : '#ef4444') : '#ccc'}` }}
+                    aria-label="Payment amount in XLM"
+                  />
+                  {amountTouched && <span className="input-icon">{amountValid ? '✅' : '❌'}</span>}
+                </div>
+                <AnimatePresence>
+                  {amountTouched && amountError && (
+                    <motion.p className="field-error" variants={v.fadeSlide} initial="hidden" animate="visible" exit="exit">
+                      {amountError}
+                    </motion.p>
+                  )}
+                </AnimatePresence>
+                <FeeDisplay amount={amount} visible={amountValid} />
+                <div style={{ display: 'flex', gap: 8 }}>
+                  <motion.button onClick={sendPayment} {...tap} disabled={!recipientValid || !amountValid || loading === 'send'}>
+                    {loading === 'send' ? <Spinner label="Sending payment..." /> : 'Send'}
+                  </motion.button>
+                  <motion.button
+                    className="btn-clear"
+                    onClick={clearForm}
+                    {...tap}
+                    disabled={loading === 'send' || (!recipient && !amount)}
+                  >
+                    Clear
+                  </motion.button>
+                </div>
               </ErrorBoundary>
             </motion.div>
 
@@ -428,7 +393,7 @@ function App() {
       {/* QR Code Modal */}
       <AnimatePresence>
         {showQR && account && (
-          <QRCodeModal publicKey={account.publicKey} onClose={() => setShowQR(false)} />
+          <QRCodeModal publicKey={account.publicKey} onClose={() => dispatch({ type: A.SET_SHOW_QR, payload: false })} />
         )}
       </AnimatePresence>
     </div>
