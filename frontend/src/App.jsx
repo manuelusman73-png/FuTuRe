@@ -1,4 +1,5 @@
 import { useState, useEffect, useCallback } from 'react';
+import { useEffect, useCallback, useState } from 'react';
 import axios from 'axios';
 import { motion, AnimatePresence, useReducedMotion } from 'framer-motion';
 import { isValidStellarAddress } from './utils/validateStellarAddress';
@@ -23,8 +24,10 @@ import { FeeDisplay } from './components/FeeDisplay';
 import { InlineConfirmation } from './components/InlineConfirmation';
 import { logError } from './utils/errorLogger';
 import { ImportAccountForm } from './components/ImportAccountForm';
+import { ConfirmSendDialog } from './components/ConfirmSendDialog';
 import { LanguageSelector } from './components/LanguageSelector';
 import { FileUpload } from './components/FileUpload';
+import { AccountCreatedCelebration } from './components/AccountCreatedCelebration';
 import { useTheme } from './contexts/ThemeContext';
 import { useAppState, useAppDispatch, A } from './store/index.js';
 
@@ -38,6 +41,19 @@ function withTimeout(promiseFn) {
 }
 
 function App() {
+  const [account, setAccount] = useState(null);
+  const [balance, setBalance] = useState(null);
+  const [recipient, setRecipient] = useState('');
+  const [amount, setAmount] = useState('');
+
+  const [loading, setLoading] = useState('');
+  const [memo, setMemo] = useState('');
+  const [showQR, setShowQR] = useState(false);
+  const [showShortcuts, setShowShortcuts] = useState(false);
+  const [showImportForm, setShowImportForm] = useState(false);
+  const [confirmClear, setConfirmClear] = useState(false);
+  const { account, balance, loading, recipient, amount, memo, memoType, showQR, showImportForm, showShortcuts } = useAppState();
+  const [showConfirm, setShowConfirm] = useState(false);
   const { account, balance, loading, recipient, amount, showQR, showImportForm, showShortcuts } = useAppState();
   const dispatch = useAppDispatch();
 
@@ -51,6 +67,10 @@ function App() {
   const { canInstall, install, updateAvailable, applyUpdate } = usePWA();
   const { queue: queueOffline, dequeue, pendingItems, pendingCount } = useOfflineQueue();
   const { isDark, toggleTheme } = useTheme();
+  const [replaySecret, setReplaySecret] = useState('');
+  const [showReplayPrompt, setShowReplayPrompt] = useState(false);
+  const [showCelebration, setShowCelebration] = useState(false);
+  const { theme, isDark, toggleTheme } = useTheme();
   useRTL();
   const prefersReduced = useReducedMotion();
   const v = makeVariants(prefersReduced);
@@ -138,7 +158,7 @@ function App() {
       const { data } = await withTimeout(signal => axios.post('/api/stellar/account/create', null, { signal }));
       dispatch({ type: A.SET_ACCOUNT, payload: data });
       resetForm();
-      msg.success('Account created! Save your secret key securely.');
+      setShowCelebration(true);
     } catch (error) {
       logError(error, { context: 'createAccount' });
       msg.error(getFriendlyError(error), { retry: createAccount });
@@ -187,6 +207,8 @@ function App() {
     if (!account || !recipientValid || !amountValid) return;
     dispatch({ type: A.SET_LOADING, payload: 'send' });
     const payload = { sourceSecret: account.secretKey, destination: recipient, amount, assetCode: 'XLM', memo: memo || undefined };
+    setLoading('send');
+    const payload = { sourceSecret: account.secretKey, destination: recipient, amount, assetCode: 'XLM', memo: memo || undefined, memoType: memo ? memoType : undefined };
 
     // Optimistic balance update
     if (xlmBalance !== null) {
@@ -216,6 +238,16 @@ function App() {
   return (
     <>
       <a href="#main-content" className="skip-link">Skip to main content</a>
+
+      {/* Account creation celebration overlay */}
+      <AccountCreatedCelebration
+        visible={showCelebration}
+        onDone={() => {
+          setShowCelebration(false);
+          msg.success('Account created! Save your secret key securely.');
+        }}
+        reducedMotion={prefersReduced}
+      />
 
       <div className="app">
         <div aria-live="polite" aria-atomic="true" className="sr-only">
@@ -343,6 +375,73 @@ function App() {
                 </motion.div>
               )}
             </AnimatePresence>
+            {/* Send Payment */}
+            <motion.div className="section" variants={v.fadeSlide}>
+              <ErrorBoundary context="send-payment">
+                <h3>Send Payment</h3>
+                <div className="input-wrap">
+                  <input
+                    type="text"
+                    placeholder="Recipient Public Key"
+                    value={recipient}
+                    onChange={(e) => dispatch({ type: A.SET_RECIPIENT, payload: e.target.value })}
+                    onKeyDown={(e) => e.key === 'Enter' && setShowConfirm(true)}
+                    style={{ border: `2px solid ${recipientTouched ? (recipientValid ? '#22c55e' : '#ef4444') : '#ccc'}` }}
+                    aria-label="Recipient public key"
+                  />
+                  {recipientTouched && <span className="input-icon">{recipientValid ? '✅' : '❌'}</span>}
+                </div>
+                <AnimatePresence>
+                  {recipientTouched && !recipientValid && (
+                    <motion.p className="field-error" variants={v.fadeSlide} initial="hidden" animate="visible" exit="exit">
+                      Invalid Stellar address format (must start with G and be 56 characters)
+                    </motion.p>
+                  )}
+                </AnimatePresence>
+                <div className="input-wrap">
+                  <input
+                    type="text"
+                    placeholder="Amount (XLM)"
+                    value={amount}
+                    onChange={(e) => dispatch({ type: A.SET_AMOUNT, payload: formatAmount(e.target.value) })}
+                    onKeyDown={(e) => e.key === 'Enter' && setShowConfirm(true)}
+                    style={{ border: `2px solid ${amountTouched ? (amountValid ? '#22c55e' : '#ef4444') : '#ccc'}` }}
+                    aria-label="Payment amount in XLM"
+                  />
+                  {amountTouched && <span className="input-icon">{amountValid ? '✅' : '❌'}</span>}
+                </div>
+                <AnimatePresence>
+                  {amountTouched && amountError && (
+                    <motion.p className="field-error" variants={v.fadeSlide} initial="hidden" animate="visible" exit="exit">
+                      {amountError}
+                    </motion.p>
+                  )}
+                </AnimatePresence>
+                <FeeDisplay amount={amount} visible={amountValid} />
+                <div style={{ display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap' }}>
+                  <motion.button onClick={sendPayment} {...tap} disabled={!recipientValid || !amountValid || loading === 'send'}>
+                    {loading === 'send' ? <Spinner label="Sending payment..." /> : 'Send'}
+                  </motion.button>
+                  {confirmClear ? (
+                    <span className="confirm-clear" role="group" aria-label="Confirm clear form">
+                      <span className="confirm-clear__label">Clear form?</span>
+                      <button type="button" className="confirm-clear__yes" onClick={confirmClearYes} aria-label="Yes, clear the form">Yes</button>
+                      <button type="button" className="confirm-clear__no"  onClick={confirmClearNo}  aria-label="No, keep the form">No</button>
+                    </span>
+                  ) : (
+                    <motion.button
+                      className="btn-clear"
+                      onClick={clearForm}
+                      {...tap}
+                      disabled={loading === 'send' || (!recipient && !amount)}
+                      aria-label="Clear payment form"
+                    >
+                      Clear
+                    </motion.button>
+                  )}
+                </div>
+              </ErrorBoundary>
+            </motion.div>
 
             <AnimatePresence>
               {account && (
@@ -420,6 +519,8 @@ function App() {
                         value={recipient}
                         onChange={(e) => dispatch({ type: A.SET_RECIPIENT, payload: e.target.value })}
                         onKeyDown={(e) => e.key === 'Enter' && sendPayment()}
+                        onChange={(e) => setRecipient(e.target.value)}
+                        onKeyDown={(e) => e.key === 'Enter' && setShowConfirm(true)}
                         style={{ border: `2px solid ${recipientTouched ? (recipientValid ? '#22c55e' : '#ef4444') : '#ccc'}` }}
                         aria-invalid={recipientTouched && !recipientValid}
                         aria-describedby={recipientTouched && !recipientValid ? 'recipient-error' : undefined}
@@ -445,6 +546,8 @@ function App() {
                         value={amount}
                         onChange={(e) => dispatch({ type: A.SET_AMOUNT, payload: formatAmount(e.target.value) })}
                         onKeyDown={(e) => e.key === 'Enter' && sendPayment()}
+                        onChange={(e) => setAmount(formatAmount(e.target.value))}
+                        onKeyDown={(e) => e.key === 'Enter' && setShowConfirm(true)}
                         style={{ border: `2px solid ${amountTouched ? (amountValid ? '#22c55e' : '#ef4444') : '#ccc'}` }}
                         aria-invalid={amountTouched && !!amountError}
                         aria-describedby={amountTouched && amountError ? 'amount-error' : undefined}
@@ -471,22 +574,47 @@ function App() {
 
                     <div className="input-wrap">
                       <label htmlFor="memo-input" className="sr-only">Payment memo (optional)</label>
+                      <label htmlFor="memo-type-select" className="sr-only">Memo type</label>
+                      <select
+                        id="memo-type-select"
+                        value={memoType}
+                        onChange={(e) => dispatch({ type: A.SET_MEMO_TYPE, payload: e.target.value })}
+                        aria-label="Memo type"
+                        style={{ flexShrink: 0 }}
+                      >
+                        <option value="text">Text</option>
+                        <option value="id">ID (exchange)</option>
+                      </select>
+                      <label htmlFor="memo-input" className="sr-only">
+                        {memoType === 'id' ? 'Numeric memo ID (required for exchange deposits)' : 'Payment memo (optional, max 28 characters)'}
+                      </label>
                       <input
                         id="memo-input"
-                        type="text"
-                        placeholder="Memo (optional, max 28 chars)"
+                        type={memoType === 'id' ? 'number' : 'text'}
+                        inputMode={memoType === 'id' ? 'numeric' : undefined}
+                        placeholder={memoType === 'id' ? 'Numeric memo ID (exchange deposit)' : 'Memo (optional, max 28 chars)'}
                         value={memo}
-                        onChange={(e) => setMemo(e.target.value.slice(0, 28))}
+                        onChange={(e) => {
+                          const val = memoType === 'id'
+                            ? e.target.value.replace(/\D/g, '').slice(0, 20)
+                            : e.target.value.slice(0, 28);
+                          dispatch({ type: A.SET_MEMO, payload: val });
+                        }}
                         onKeyDown={(e) => e.key === 'Enter' && sendPayment()}
+                        aria-label={memoType === 'id' ? 'Numeric memo ID for exchange deposit' : 'Payment memo (optional)'}
+                        maxLength={memoType === 'id' ? 20 : 28}
+                        onChange={(e) => setMemo(e.target.value.slice(0, 28))}
+                        onKeyDown={(e) => e.key === 'Enter' && setShowConfirm(true)}
+                        aria-label="Payment memo (optional)"
                         maxLength="28"
                       />
-                      {memo && <span className="input-icon" aria-hidden="true">{memo.length}/28</span>}
+                      {memo && memoType === 'text' && <span className="input-icon" aria-hidden="true">{memo.length}/28</span>}
                     </div>
 
                     <FeeDisplay amount={amount} visible={amountValid} />
                     <div style={{ display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap' }}>
                       <motion.button
-                        onClick={sendPayment}
+                        onClick={() => setShowConfirm(true)}
                         {...tap}
                         disabled={!recipientValid || !amountValid || loading === 'send'}
                         aria-busy={loading === 'send'}
@@ -592,6 +720,15 @@ function App() {
             </motion.div>
           )}
         </AnimatePresence>
+
+        <ConfirmSendDialog
+          open={showConfirm}
+          recipient={recipient}
+          amount={amount}
+          asset="XLM"
+          onConfirm={() => { setShowConfirm(false); sendPayment(); }}
+          onCancel={() => setShowConfirm(false)}
+        />
       </div>
     </>
   );
