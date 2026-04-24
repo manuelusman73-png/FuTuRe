@@ -21,6 +21,7 @@ import { TransactionHistory } from './components/TransactionHistory';
 import { FeeDisplay } from './components/FeeDisplay';
 import { logError } from './utils/errorLogger';
 import { ImportAccountForm } from './components/ImportAccountForm';
+import { ConfirmSendDialog } from './components/ConfirmSendDialog';
 import { LanguageSelector } from './components/LanguageSelector';
 import { FileUpload } from './components/FileUpload';
 import { useTheme } from './contexts/ThemeContext';
@@ -46,6 +47,7 @@ function App() {
   const [showShortcuts, setShowShortcuts] = useState(false);
   const [showImportForm, setShowImportForm] = useState(false);
   const [confirmClear, setConfirmClear] = useState(false);
+  const [showConfirm, setShowConfirm] = useState(false);
   const { account, balance, loading, recipient, amount, showQR, showImportForm, showShortcuts } = useAppState();
   const dispatch = useAppDispatch();
 
@@ -470,7 +472,7 @@ function App() {
                     placeholder="Recipient Public Key"
                     value={recipient}
                     onChange={(e) => dispatch({ type: A.SET_RECIPIENT, payload: e.target.value })}
-                    onKeyDown={(e) => e.key === 'Enter' && sendPayment()}
+                    onKeyDown={(e) => e.key === 'Enter' && setShowConfirm(true)}
                     style={{ border: `2px solid ${recipientTouched ? (recipientValid ? '#22c55e' : '#ef4444') : '#ccc'}` }}
                     aria-label="Recipient public key"
                   />
@@ -489,7 +491,7 @@ function App() {
                     placeholder="Amount (XLM)"
                     value={amount}
                     onChange={(e) => dispatch({ type: A.SET_AMOUNT, payload: formatAmount(e.target.value) })}
-                    onKeyDown={(e) => e.key === 'Enter' && sendPayment()}
+                    onKeyDown={(e) => e.key === 'Enter' && setShowConfirm(true)}
                     style={{ border: `2px solid ${amountTouched ? (amountValid ? '#22c55e' : '#ef4444') : '#ccc'}` }}
                     aria-label="Payment amount in XLM"
                   />
@@ -610,7 +612,7 @@ function App() {
                         placeholder="Recipient Public Key"
                         value={recipient}
                         onChange={(e) => setRecipient(e.target.value)}
-                        onKeyDown={(e) => e.key === 'Enter' && sendPayment()}
+                        onKeyDown={(e) => e.key === 'Enter' && setShowConfirm(true)}
                         style={{ border: `2px solid ${recipientTouched ? (recipientValid ? '#22c55e' : '#ef4444') : '#ccc'}` }}
                         aria-label="Recipient public key"
                         aria-invalid={recipientTouched && !recipientValid}
@@ -636,7 +638,7 @@ function App() {
                         placeholder="Amount (XLM)"
                         value={amount}
                         onChange={(e) => setAmount(formatAmount(e.target.value))}
-                        onKeyDown={(e) => e.key === 'Enter' && sendPayment()}
+                        onKeyDown={(e) => e.key === 'Enter' && setShowConfirm(true)}
                         style={{ border: `2px solid ${amountTouched ? (amountValid ? '#22c55e' : '#ef4444') : '#ccc'}` }}
                         aria-label="Payment amount in XLM"
                         aria-invalid={amountTouched && !!amountError}
@@ -671,7 +673,7 @@ function App() {
                         placeholder="Memo (optional, max 28 chars)"
                         value={memo}
                         onChange={(e) => setMemo(e.target.value.slice(0, 28))}
-                        onKeyDown={(e) => e.key === 'Enter' && sendPayment()}
+                        onKeyDown={(e) => e.key === 'Enter' && setShowConfirm(true)}
                         aria-label="Payment memo (optional)"
                         maxLength="28"
                       />
@@ -681,7 +683,7 @@ function App() {
                     <FeeDisplay amount={amount} visible={amountValid} />
                     <div style={{ display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap' }}>
                       <motion.button
-                        onClick={sendPayment}
+                        onClick={() => setShowConfirm(true)}
                         {...tap}
                         disabled={!recipientValid || !amountValid || loading === 'send'}
                         aria-busy={loading === 'send'}
@@ -732,6 +734,15 @@ function App() {
             <QRCodeModal publicKey={account.publicKey} onClose={() => setShowQR(false)} />
           )}
         </AnimatePresence>
+
+        <ConfirmSendDialog
+          open={showConfirm}
+          recipient={recipient}
+          amount={amount}
+          asset="XLM"
+          onConfirm={() => { setShowConfirm(false); sendPayment(); }}
+          onCancel={() => setShowConfirm(false)}
+        />
       </div>
     </>
       {/* QR Code Modal */}
