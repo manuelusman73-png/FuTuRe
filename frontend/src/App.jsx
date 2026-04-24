@@ -52,6 +52,7 @@ function App() {
   const [showShortcuts, setShowShortcuts] = useState(false);
   const [showImportForm, setShowImportForm] = useState(false);
   const [confirmClear, setConfirmClear] = useState(false);
+  const { account, balance, loading, recipient, amount, showQR, showImportForm, showShortcuts, accountLabel } = useAppState();
   const { account, balance, loading, recipient, amount, memo, memoType, showQR, showImportForm, showShortcuts } = useAppState();
   const [showConfirm, setShowConfirm] = useState(false);
   const { account, balance, loading, recipient, amount, showQR, showImportForm, showShortcuts } = useAppState();
@@ -69,6 +70,8 @@ function App() {
   const { isDark, toggleTheme } = useTheme();
   const [replaySecret, setReplaySecret] = useState('');
   const [showReplayPrompt, setShowReplayPrompt] = useState(false);
+  const [editingLabel, setEditingLabel] = useState(false);
+  const [labelDraft, setLabelDraft] = useState('');
   const [showCelebration, setShowCelebration] = useState(false);
   const { theme, isDark, toggleTheme } = useTheme();
   useRTL();
@@ -120,8 +123,13 @@ function App() {
     return () => navigator.serviceWorker.removeEventListener('message', onSwMessage);
   }, []);
 
-  const resetForm = () => dispatch({ type: A.RESET_FORM });
+  // Load label from backend when account is restored from persisted state
+  useEffect(() => {
+    if (account?.publicKey && !accountLabel) loadLabel(account.publicKey);
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [account?.publicKey]);
 
+  const resetForm = () => dispatch({ type: A.RESET_FORM });
   const clearForm = () => {
     if (recipient || amount) { setConfirmClear(true); return; }
     resetForm();
@@ -152,11 +160,31 @@ function App() {
     else { msg.success('All queued payments sent.'); checkBalance(); }
   };
 
+  const loadLabel = useCallback(async (publicKey) => {
+    try {
+      const { data } = await axios.get(`/api/stellar/account/${publicKey}/label`);
+      dispatch({ type: A.SET_LABEL, payload: data.accountLabel ?? '' });
+    } catch { /* non-critical */ }
+  }, [dispatch]);
+
+  const saveLabel = async () => {
+    if (!account) return;
+    try {
+      await axios.put(`/api/stellar/account/${account.publicKey}/label`, { accountLabel: labelDraft });
+      dispatch({ type: A.SET_LABEL, payload: labelDraft });
+      setEditingLabel(false);
+    } catch (error) {
+      msg.error('Failed to save label');
+    }
+  };
+
   const createAccount = async () => {
     dispatch({ type: A.SET_LOADING, payload: 'create' });
     try {
+      const { data } = await withTimeout(axios.post('/api/stellar/account/create'));
       const { data } = await withTimeout(signal => axios.post('/api/stellar/account/create', null, { signal }));
       dispatch({ type: A.SET_ACCOUNT, payload: data });
+      dispatch({ type: A.SET_LABEL, payload: '' });
       resetForm();
       setShowCelebration(true);
     } catch (error) {
@@ -171,6 +199,7 @@ function App() {
       const { data } = await withTimeout(signal => axios.post('/api/stellar/account/import', { secretKey }, { signal }));
       dispatch({ type: A.SET_ACCOUNT, payload: data });
       dispatch({ type: A.SET_SHOW_IMPORT, payload: false });
+      await loadLabel(data.publicKey);
       msg.success('Account imported successfully!');
     } catch (error) {
       logError(error, { context: 'importAccount' });
@@ -267,7 +296,39 @@ function App() {
 
         <header>
           <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-            <h1>Stellar Remittance Platform</h1>
+            <div>
+              <h1>Stellar Remittance Platform</h1>
+              {account && (
+                <div style={{ display: 'flex', alignItems: 'center', gap: 6, marginTop: 2 }}>
+                  {editingLabel ? (
+                    <>
+                      <input
+                        type="text"
+                        value={labelDraft}
+                        onChange={(e) => setLabelDraft(e.target.value.slice(0, 50))}
+                        onKeyDown={(e) => { if (e.key === 'Enter') saveLabel(); if (e.key === 'Escape') setEditingLabel(false); }}
+                        placeholder="Add a nickname…"
+                        maxLength={50}
+                        aria-label="Account nickname"
+                        style={{ fontSize: '0.85rem', padding: '2px 6px' }}
+                        autoFocus
+                      />
+                      <button type="button" onClick={saveLabel} style={{ fontSize: '0.8rem' }} aria-label="Save nickname">Save</button>
+                      <button type="button" onClick={() => setEditingLabel(false)} style={{ fontSize: '0.8rem' }} aria-label="Cancel editing nickname">Cancel</button>
+                    </>
+                  ) : (
+                    <button
+                      type="button"
+                      onClick={() => { setLabelDraft(accountLabel); setEditingLabel(true); }}
+                      style={{ fontSize: '0.85rem', background: 'none', border: 'none', cursor: 'pointer', padding: 0, color: 'inherit', textDecoration: 'underline dotted' }}
+                      aria-label={accountLabel ? `Account nickname: ${accountLabel}. Click to edit.` : 'Add account nickname'}
+                    >
+                      {accountLabel || `${account.publicKey.slice(0, 6)}…${account.publicKey.slice(-4)}`}
+                    </button>
+                  )}
+                </div>
+              )}
+            </div>
             <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
               <button
                 type="button"
