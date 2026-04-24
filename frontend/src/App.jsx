@@ -21,6 +21,7 @@ import { TransactionHistory } from './components/TransactionHistory';
 import { FeeDisplay } from './components/FeeDisplay';
 import { logError } from './utils/errorLogger';
 import { ImportAccountForm } from './components/ImportAccountForm';
+import { ConfirmSendDialog } from './components/ConfirmSendDialog';
 import { LanguageSelector } from './components/LanguageSelector';
 import { FileUpload } from './components/FileUpload';
 import { useTheme } from './contexts/ThemeContext';
@@ -42,11 +43,14 @@ function App() {
   const [amount, setAmount] = useState('');
 
   const [loading, setLoading] = useState('');
+  const [memo, setMemo] = useState('');
   const [showQR, setShowQR] = useState(false);
   const [showShortcuts, setShowShortcuts] = useState(false);
   const [showImportForm, setShowImportForm] = useState(false);
   const [confirmClear, setConfirmClear] = useState(false);
   const { account, balance, loading, recipient, amount, memo, memoType, showQR, showImportForm, showShortcuts } = useAppState();
+  const [showConfirm, setShowConfirm] = useState(false);
+  const { account, balance, loading, recipient, amount, showQR, showImportForm, showShortcuts } = useAppState();
   const dispatch = useAppDispatch();
 
   const msg = useMessages();
@@ -121,12 +125,12 @@ function App() {
     let anyFailed = false;
     for (const item of pendingItems) {
       try {
-        await withTimeout(axios.post('/api/stellar/payment/send', {
+        await withTimeout(signal => axios.post('/api/stellar/payment/send', {
           sourceSecret: replaySecret,
           destination: item.destination,
           amount: item.amount,
           assetCode: item.assetCode,
-        }));
+        }, { signal }));
         await dequeue(item.id);
       } catch (error) {
         anyFailed = true;
@@ -143,8 +147,6 @@ function App() {
   const createAccount = async () => {
     try {
       const { data } = await withTimeout(signal => axios.post('/api/stellar/account/create', null, { signal }));
-      setAccount(data);
-      const { data } = await withTimeout(axios.post('/api/stellar/account/create'));
       dispatch({ type: A.SET_ACCOUNT, payload: data });
       resetForm();
       msg.success('Account created! Save your secret key securely.');
@@ -157,7 +159,7 @@ function App() {
   const importAccount = async (secretKey) => {
     setLoading('import');
     try {
-      const { data } = await axios.post('/api/stellar/account/import', { secretKey });
+      const { data } = await withTimeout(signal => axios.post('/api/stellar/account/import', { secretKey }, { signal }));
       dispatch({ type: A.SET_ACCOUNT, payload: data });
       dispatch({ type: A.SET_SHOW_IMPORT, payload: false });
       msg.success('Account imported successfully!');
@@ -172,8 +174,6 @@ function App() {
     setLoading('balance');
     try {
       const { data } = await withTimeout(signal => axios.get(`/api/stellar/account/${account.publicKey}`, { signal }));
-      setBalance(data);
-      const { data } = await withTimeout(axios.get(`/api/stellar/account/${account.publicKey}`));
       dispatch({ type: A.SET_BALANCE, payload: data });
     } catch (error) {
       logError(error, { context: 'checkBalance' });
@@ -213,7 +213,6 @@ function App() {
 
     try {
       const { data } = await withTimeout(signal => axios.post('/api/stellar/payment/send', payload, { signal }));
-      const { data } = await withTimeout(axios.post('/api/stellar/payment/send', payload));
       msg.success(`Payment sent! Hash: ${data.hash}`);
       resetForm();
       checkBalance(); // sync real balance
@@ -469,7 +468,7 @@ function App() {
                     placeholder="Recipient Public Key"
                     value={recipient}
                     onChange={(e) => dispatch({ type: A.SET_RECIPIENT, payload: e.target.value })}
-                    onKeyDown={(e) => e.key === 'Enter' && sendPayment()}
+                    onKeyDown={(e) => e.key === 'Enter' && setShowConfirm(true)}
                     style={{ border: `2px solid ${recipientTouched ? (recipientValid ? '#22c55e' : '#ef4444') : '#ccc'}` }}
                     aria-label="Recipient public key"
                   />
@@ -488,7 +487,7 @@ function App() {
                     placeholder="Amount (XLM)"
                     value={amount}
                     onChange={(e) => dispatch({ type: A.SET_AMOUNT, payload: formatAmount(e.target.value) })}
-                    onKeyDown={(e) => e.key === 'Enter' && sendPayment()}
+                    onKeyDown={(e) => e.key === 'Enter' && setShowConfirm(true)}
                     style={{ border: `2px solid ${amountTouched ? (amountValid ? '#22c55e' : '#ef4444') : '#ccc'}` }}
                     aria-label="Payment amount in XLM"
                   />
@@ -609,7 +608,7 @@ function App() {
                         placeholder="Recipient Public Key"
                         value={recipient}
                         onChange={(e) => setRecipient(e.target.value)}
-                        onKeyDown={(e) => e.key === 'Enter' && sendPayment()}
+                        onKeyDown={(e) => e.key === 'Enter' && setShowConfirm(true)}
                         style={{ border: `2px solid ${recipientTouched ? (recipientValid ? '#22c55e' : '#ef4444') : '#ccc'}` }}
                         aria-label="Recipient public key"
                         aria-invalid={recipientTouched && !recipientValid}
@@ -635,7 +634,7 @@ function App() {
                         placeholder="Amount (XLM)"
                         value={amount}
                         onChange={(e) => setAmount(formatAmount(e.target.value))}
-                        onKeyDown={(e) => e.key === 'Enter' && sendPayment()}
+                        onKeyDown={(e) => e.key === 'Enter' && setShowConfirm(true)}
                         style={{ border: `2px solid ${amountTouched ? (amountValid ? '#22c55e' : '#ef4444') : '#ccc'}` }}
                         aria-label="Payment amount in XLM"
                         aria-invalid={amountTouched && !!amountError}
@@ -692,6 +691,10 @@ function App() {
                         onKeyDown={(e) => e.key === 'Enter' && sendPayment()}
                         aria-label={memoType === 'id' ? 'Numeric memo ID for exchange deposit' : 'Payment memo (optional)'}
                         maxLength={memoType === 'id' ? 20 : 28}
+                        onChange={(e) => setMemo(e.target.value.slice(0, 28))}
+                        onKeyDown={(e) => e.key === 'Enter' && setShowConfirm(true)}
+                        aria-label="Payment memo (optional)"
+                        maxLength="28"
                       />
                       {memo && memoType === 'text' && <span className="input-icon" aria-hidden="true">{memo.length}/28</span>}
                     </div>
@@ -699,7 +702,7 @@ function App() {
                     <FeeDisplay amount={amount} visible={amountValid} />
                     <div style={{ display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap' }}>
                       <motion.button
-                        onClick={sendPayment}
+                        onClick={() => setShowConfirm(true)}
                         {...tap}
                         disabled={!recipientValid || !amountValid || loading === 'send'}
                         aria-busy={loading === 'send'}
@@ -750,6 +753,15 @@ function App() {
             <QRCodeModal publicKey={account.publicKey} onClose={() => setShowQR(false)} />
           )}
         </AnimatePresence>
+
+        <ConfirmSendDialog
+          open={showConfirm}
+          recipient={recipient}
+          amount={amount}
+          asset="XLM"
+          onConfirm={() => { setShowConfirm(false); sendPayment(); }}
+          onCancel={() => setShowConfirm(false)}
+        />
       </div>
     </>
       {/* QR Code Modal */}
