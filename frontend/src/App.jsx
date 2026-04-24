@@ -42,39 +42,23 @@ function withTimeout(promiseFn) {
 }
 
 function App() {
-  const [account, setAccount] = useState(null);
-  const [balance, setBalance] = useState(null);
-  const [recipient, setRecipient] = useState('');
-  const [amount, setAmount] = useState('');
-
-  const [loading, setLoading] = useState('');
-  const [memo, setMemo] = useState('');
-  const [showQR, setShowQR] = useState(false);
-  const [showShortcuts, setShowShortcuts] = useState(false);
-  const [showImportForm, setShowImportForm] = useState(false);
-  const [confirmClear, setConfirmClear] = useState(false);
-  const { account, balance, loading, recipient, amount, showQR, showImportForm, showShortcuts, accountLabel } = useAppState();
-  const { account, balance, loading, recipient, amount, memo, memoType, showQR, showImportForm, showShortcuts } = useAppState();
-  const [showConfirm, setShowConfirm] = useState(false);
-  const [showScanner, setShowScanner] = useState(false);
+  const { account, balance, loading, recipient, amount, memo, memoType, showQR, showImportForm, showShortcuts, accountLabel } = useAppState();
   const dispatch = useAppDispatch();
 
   // Local state not in store
+  const [showConfirm, setShowConfirm] = useState(false);
+  const [showScanner, setShowScanner] = useState(false);
   const [confirmClear, setConfirmClear] = useState(false);
   const [replaySecret, setReplaySecret] = useState('');
   const [showReplayPrompt, setShowReplayPrompt] = useState(false);
+  const [editingLabel, setEditingLabel] = useState(false);
+  const [labelDraft, setLabelDraft] = useState('');
   const [showCelebration, setShowCelebration] = useState(false);
 
   const msg = useMessages();
   const { canInstall, install, updateAvailable, applyUpdate } = usePWA();
   const { queue: queueOffline, dequeue, pendingItems, pendingCount } = useOfflineQueue();
   const { isDark, toggleTheme } = useTheme();
-  const [replaySecret, setReplaySecret] = useState('');
-  const [showReplayPrompt, setShowReplayPrompt] = useState(false);
-  const [editingLabel, setEditingLabel] = useState(false);
-  const [labelDraft, setLabelDraft] = useState('');
-  const [showCelebration, setShowCelebration] = useState(false);
-  const { theme, isDark, toggleTheme } = useTheme();
   useRTL();
   const prefersReduced = useReducedMotion();
   const v = makeVariants(prefersReduced);
@@ -186,7 +170,6 @@ function App() {
   const createAccount = async () => {
     dispatch({ type: A.SET_LOADING, payload: 'create' });
     try {
-      const { data } = await withTimeout(axios.post('/api/stellar/account/create'));
       const { data } = await withTimeout(signal => axios.post('/api/stellar/account/create', null, { signal }));
       dispatch({ type: A.SET_ACCOUNT, payload: data });
       dispatch({ type: A.SET_LABEL, payload: '' });
@@ -252,9 +235,7 @@ function App() {
 
     try {
       const { data } = await withTimeout(signal => axios.post('/api/stellar/payment/send', payload, { signal }));
-      const { data } = await withTimeout(axios.post('/api/stellar/payment/send', payload));
       msg.success(`Payment sent! Hash: ${data.hash.slice(0, 8)}…`, { hash: data.hash });
-      msg.success(`Payment sent! Hash: ${data.hash}`);
       resetForm();
       checkBalance();
     } catch (error) {
