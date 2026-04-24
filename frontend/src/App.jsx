@@ -29,8 +29,11 @@ import { ConfirmSendDialog } from './components/ConfirmSendDialog';
 import { LanguageSelector } from './components/LanguageSelector';
 import { FileUpload } from './components/FileUpload';
 import { AccountCreatedCelebration } from './components/AccountCreatedCelebration';
+import { TxLookup } from './components/TxLookup';
+import { AddressBook } from './components/AddressBook';
 import { useTheme } from './contexts/ThemeContext';
 import { useAppState, useAppDispatch, A } from './store/index.js';
+import { useExchangeRate } from './hooks/useExchangeRate';
 
 const STATUS_COLORS = { connected: '#22c55e', disconnected: '#ef4444', reconnecting: '#f59e0b' };
 const TIMEOUT_MS = 30000;
@@ -74,6 +77,9 @@ function App() {
   const [editingLabel, setEditingLabel] = useState(false);
   const [labelDraft, setLabelDraft] = useState('');
   const [showCelebration, setShowCelebration] = useState(false);
+  const [showTxLookup, setShowTxLookup] = useState(false);
+  const [deepLinkHash, setDeepLinkHash] = useState('');
+  const [lastWsMessage, setLastWsMessage] = useState(null);
   const { theme, isDark, toggleTheme } = useTheme();
   useRTL();
   const prefersReduced = useReducedMotion();
@@ -81,6 +87,7 @@ function App() {
   const tap = tapScale(prefersReduced);
 
   const handleWsMessage = useCallback((wsMsg) => {
+    setLastWsMessage(wsMsg);
     if (wsMsg.type === 'transaction') {
       const text = wsMsg.direction === 'received'
         ? `📥 Received ${wsMsg.amount} ${wsMsg.assetCode} — tx: ${wsMsg.hash?.slice(0, 8)}…`
@@ -92,6 +99,7 @@ function App() {
 
   const wsStatus = useWebSocket(account?.publicKey ?? null, handleWsMessage);
   const { status: networkStatus } = useNetworkStatus();
+  const xlmUsdRate = useExchangeRate(lastWsMessage);
 
   useEffect(() => {
     const onKeyDown = (e) => {
@@ -133,6 +141,15 @@ function App() {
     if (account?.publicKey && !accountLabel) loadLabel(account.publicKey);
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [account?.publicKey]);
+
+  // Deep-link: open tx lookup when URL contains #tx=<hash>
+  useEffect(() => {
+    const match = window.location.hash.match(/^#tx=(.+)$/);
+    if (match) {
+      setDeepLinkHash(match[1]);
+      setShowTxLookup(true);
+    }
+  }, []);
 
   const resetForm = () => dispatch({ type: A.RESET_FORM });
   const clearForm = () => {
@@ -403,6 +420,15 @@ function App() {
               >
                 ⌨
               </button>
+              <button
+                type="button"
+                className="shortcuts-help-btn"
+                onClick={() => { setDeepLinkHash(''); setShowTxLookup(true); }}
+                aria-label="Look up transaction by hash"
+                title="Look up transaction by hash"
+              >
+                🔍
+              </button>
               <NetworkBadge status={networkStatus} />
               <motion.span
                 animate={{ opacity: [0.6, 1, 0.6] }}
@@ -529,6 +555,12 @@ function App() {
                   )}
                 </AnimatePresence>
                 <FeeDisplay amount={amount} visible={amountValid} />
+                {amountValid && xlmUsdRate && (
+                  <p className="rate-estimate" aria-live="polite">
+                    ≈ ${(parseFloat(amount) * xlmUsdRate).toFixed(2)} USD
+                    <span className="rate-source"> · live rate</span>
+                  </p>
+                )}
                 <div style={{ display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap' }}>
                   <motion.button onClick={sendPayment} {...tap} disabled={!recipientValid || !amountValid || loading === 'send'}>
                     {loading === 'send' ? <Spinner label="Sending payment..." /> : 'Send'}
@@ -621,6 +653,10 @@ function App() {
                 <motion.section className="section" aria-labelledby="send-heading" variants={v.fadeSlide}>
                   <ErrorBoundary context="send-payment">
                     <h2 id="send-heading">Send Payment</h2>
+                    <AddressBook
+                      onSelect={(address) => dispatch({ type: A.SET_RECIPIENT, payload: address })}
+                      prefillAddress={recipient}
+                    />
                     <div className="input-wrap">
                       <label htmlFor="recipient-input" className="sr-only">Recipient public key</label>
                       <input
@@ -735,6 +771,12 @@ function App() {
                     </div>
 
                     <FeeDisplay amount={amount} visible={amountValid} />
+                    {amountValid && xlmUsdRate && (
+                      <p className="rate-estimate" aria-live="polite">
+                        ≈ ${(parseFloat(amount) * xlmUsdRate).toFixed(2)} USD
+                        <span className="rate-source"> · live rate</span>
+                      </p>
+                    )}
                     <div style={{ display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap' }}>
                       <motion.button
                         onClick={() => setShowConfirm(true)}
@@ -857,6 +899,16 @@ function App() {
           onConfirm={() => { setShowConfirm(false); sendPayment(); }}
           onCancel={() => setShowConfirm(false)}
         />
+
+        <AnimatePresence>
+          {showTxLookup && (
+            <TxLookup
+              initialHash={deepLinkHash}
+              accountPublicKey={account?.publicKey ?? ''}
+              onClose={() => { setShowTxLookup(false); setDeepLinkHash(''); }}
+            />
+          )}
+        </AnimatePresence>
       </div>
     </>
   );
